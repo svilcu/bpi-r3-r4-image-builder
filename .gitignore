@@ -1,0 +1,4 @@
+.vagrant
+.vscode
+.tool-version
+.ansible

@@ -1,0 +1,125 @@
+---
+- name: Create custom OpenWRT image with Imagebuilder for Banana Pi R3 or R4
+  hosts: all
+  vars:
+    board: "r4"                 # Board model: "r3" or "r4"
+    destination: "../images"    # Local folder where the built image is stored
+    openwrt_version: "24.10.0"  # OpenWRT version (24.10.0 required for R4)
+    profile: "{{ 'bananapi_bpi-' ~ board }}"
+    imagebuilder_archive: "{{'openwrt-imagebuilder-' ~ openwrt_version ~ '-mediatek-filogic.Linux-x86_64.tar.zst'}}"
+    imagebuilder_name: "{{ imagebuilder_archive | regex_replace('\\.tar\\.zst$', '') }}"
+    image_name: "{{ 'openwrt-' ~ openwrt_version ~ '-mediatek-filogic-' ~ profile ~ '-squashfs-sysupgrade.itb'}}"
+    # yamllint disable-line rule:line-length
+    imagebuilder_url: "https://downloads.openwrt.org/releases/{{ openwrt_version }}/targets/mediatek/filogic/{{ imagebuilder_archive }}"
+  tasks:
+    - name: Install required packages
+      become: true
+      ansible.builtin.dnf:
+        name: "{{ packages }}"
+        update_cache: true
+        state: present
+      vars:
+        packages:
+          - perl-core
+          - git
+          - gawk
+          - gettext
+          - ncurses-devel
+          - zlib-devel
+          - openssl-devel
+          - libxslt
+          - wget
+          - which
+          - "@c-development"
+          - "@development-tools"
+          - "@development-libs"
+          - zlib-static
+          - python3
+          - zstd
+
+    - name: Check if Image Builder is already downloaded
+      ansible.builtin.stat:
+        path: "/home/vagrant/{{ imagebuilder_archive }}"
+      register: imagebuilder_image
+
+    - name: Download Image Builder
+      ansible.builtin.get_url:
+        url: "{{ imagebuilder_url }}"
+        dest: "/home/vagrant"
+        mode: "0600"
+      when: not imagebuilder_image.stat.exists | bool
+
+    - name: Extract archive
+      ansible.builtin.unarchive:
+        src: "{{ imagebuilder_archive }}"
+        dest: "/home/vagrant/"
+        remote_src: true
+
+    - name: Remove the extracted archive
+      ansible.builtin.file:
+        path: "/home/vagrant/{{ imagebuilder_archive }}"
+        state: absent
+
+    - name: Remove .profiles.mk file
+      ansible.builtin.file:
+        path: "{{ imagebuilder_name }}/.profiles.mk"
+        state: absent
+
+    - name: Create tmp directory
+      ansible.builtin.file:
+        path: "{{ imagebuilder_name }}/tmp"
+        state: directory
+        mode: '0755'
+
+    - name: Create .profiles.mk using make
+      ansible.builtin.shell: |
+        make .profiles.mk
+      args:
+        chdir: "{{ imagebuilder_name }}"
+      register: shell_output
+      changed_when: shell_output.rc == 0
+
+    - name: Read packages into variable
+      ansible.builtin.set_fact:
+        opkg_packages: "{{ lookup('file', 'packages.txt')| split('\n') | join(' ') }}"
+
+    - name: Create image
+      ansible.builtin.shell: |
+        make image PROFILE="{{ profile }}" PACKAGES="{{ opkg_packages }}" &> /tmp/output
+      args:
+        chdir: "{{ imagebuilder_name }}"
+      register: shell_output
+      changed_when: shell_output.rc == 0
+
+    - name: Create local images directory if it does not exist
+      ansible.builtin.file:
+        path: "{{ destination }}"
+        state: directory
+        mode: '0755'
+      delegate_to: localhost
+
+    - name: Copy newly created image localy
+      ansible.builtin.fetch:
+        src: "/home/vagrant/{{ imagebuilder_name }}/bin/targets/mediatek/filogic/{{ image_name }}"
+        dest: "{{ destination }}/"
+        flat: true
+
+    - name: Remove old custom.itb image if it exists
+      ansible.builtin.file:
+        path: "{{ destination }}/{{ board }}-custom.itb"
+        state: absent
+      delegate_to: localhost
+
+    - name: Hard link the image to custom.itb
+      ansible.builtin.file:
+        src: "{{ destination }}/{{ image_name }}"
+        path: "{{ destination }}/{{ board }}-custom.itb"
+        state: hard
+        mode: "0644"
+      delegate_to: localhost
+
+    - name: Remove image with long name
+      ansible.builtin.file:
+        path: "{{ destination }}/{{ image_name }}"
+        state: absent
+      delegate_to: localhost

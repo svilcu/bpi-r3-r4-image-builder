@@ -53,7 +53,7 @@ pip install -U -r requirements.txt
 ### **1. Clone the Repository**
 
 ```bash
-git clone https://github.com/yourusername/bpi-r3-r4-image-builder.git
+git clone https://github.com/svilcu/bpi-r3-r4-image-builder.git
 cd bpi-r3-r4-image-builder
 ```
 
